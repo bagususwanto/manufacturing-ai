@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  backend-nest:
+    build:
+      context: ./backend-nest
+    ports:
+      - "5020:5020"
+    volumes:
+      - ./backend-nest:/app
+      - /app/node_modules
+    restart: unless-stopped
+    networks:
+      - my-network
+
+  backend-python:
+    build:
+      context: ./backend-python
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend-python:/app
+      - /app/venv
+    restart: unless-stopped
+    networks:
+      - my-network
+
+networks:
+  my-network:
+    external: true

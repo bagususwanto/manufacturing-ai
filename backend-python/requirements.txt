@@ -1,0 +1,32 @@
+# Compatible versions for material processing service
+# Updated for NumPy 1.x compatibility
+
+# Core dependencies
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0,<2.0.0
+
+# Machine Learning
+sentence-transformers>=2.2.0,<3.0.0
+torch>=1.11.0,<3.0.0
+torchvision>=0.12.0,<1.0.0
+transformers>=4.21.0,<5.0.0
+huggingface-hub>=0.10.0,<1.0.0
+
+# Vector Database
+qdrant-client>=1.6.0,<2.0.0
+
+# Web Framework
+fastapi>=0.68.0,<1.0.0
+uvicorn>=0.15.0,<1.0.0
+pydantic>=1.8.0,<3.0.0
+
+# HTTP Client
+aiohttp>=3.8.0,<4.0.0
+
+# Utilities
+tqdm>=4.62.0
+pillow>=8.3.0,<11.0.0
+requests>=2.25.0,<3.0.0
+
+# Optional: for better performance
+scikit-learn>=1.0.0,<2.0.0

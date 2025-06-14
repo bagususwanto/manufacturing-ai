@@ -3,6 +3,13 @@
 /node_modules
 /build
 
+# dependencies python venvironment
+/venv
+/__pycache__
+/warehouse/__pycache__
+/production/__pycache__
+
+
 # Logs
 logs
 *.log

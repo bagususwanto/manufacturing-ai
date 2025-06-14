@@ -4,7 +4,7 @@ import axios from 'axios';
 @Injectable()
 export class OllamaService implements OnModuleInit {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly baseUrl = 'http://localhost:11434/api';
+  private readonly baseUrl = 'http://ollama:11434/api';
   private readonly model = 'qwen3:0.6b'; // Ganti dengan model yang sesuai
   private isServerAvailable = false;
 
