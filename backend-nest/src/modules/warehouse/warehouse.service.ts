@@ -72,10 +72,6 @@ export class WarehouseService {
 
   buildPrompt(question: string, context: string): string {
     return `
-Anda adalah Asisten AI Warehouse yang membantu menjawab pertanyaan pengguna berdasarkan data yang tersedia.
-Jawab dengan bahasa sehari-hari dan jelas menggunakan bahasa Indonesia.
-
-Pertanyaan pengguna:
 ${question}
 
 ${
@@ -83,7 +79,7 @@ ${
     ? `Data:
 ${context}
 `
-    : ``
+    : `Kamu adalah Asisten Warehouse AI, kamu akan menjawab pertanyaan tentang warehouse.`
 }
     `;
   }

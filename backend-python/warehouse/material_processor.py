@@ -144,7 +144,7 @@ Dipasok oleh {item.get('supplier', '')}, dikemas dalam {packaging_info}, dengan 
 Harga per {item.get('uom', '')}: {item.get('price', '')}, dan minimal order sebanyak {item.get('minOrder', '')}.
 Material ini dikelola dengan MRP type {item.get('mrpType', '')}, minimum stock {item.get('minStock', '')}, maksimum stock {item.get('maxStock', '')}.
 Update stok terakhir tercatat sebanyak {stock_info} pada {item.get('stockUpdatedAt', '')} oleh {item.get('stockUpdatedBy', '')}.
-Saat ini stok berstatus {item.get('stockStatus', '')}, dan diperkirakan dapat mencukupi kebutuhan selama {item.get('leadShift', '')} atau sekitar {item.get('leadTime', '')}.
+Saat ini stok berstatus {item.get('stockStatus', '')}, dan diperkirakan dapat mencukupi kebutuhan selama {item.get('leadShift', '')} shift atau sekitar {item.get('leadTime', '')} hari.
 """.strip()
 
             
