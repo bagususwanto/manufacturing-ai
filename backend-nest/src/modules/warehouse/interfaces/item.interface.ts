@@ -18,6 +18,7 @@ export interface Item {
   minOrder: number;
   category: string;
   stock: number;
+  stockStatus: string;
   stockUpdatedAt: string | null; // ISO date string or null
   stockUpdatedBy: string | null;
 }

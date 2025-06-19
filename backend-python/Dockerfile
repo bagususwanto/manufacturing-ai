@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "script.py"]
+CMD ["python", "main.py"]

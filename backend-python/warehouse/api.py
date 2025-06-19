@@ -1,215 +1,95 @@
 # warehouse/api.py
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 import traceback
-import config
+from config import API_CONFIG, MODEL_CONFIG, SEARCH_CONFIG
+from warehouse.services.material_service import MaterialService
+from warehouse.services.job_service import JobService
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global processor instance
-processor = None
-initialization_error = None
+# Initialize services
+material_service = None
+job_service = JobService()
 
 class ProcessingRequest(BaseModel):
-    api_url: str = config.API_URL
-    qdrant_url: str = config.QDRANT_URL
-    model_name: str = config.MODEL_NAME
-    collection_name: str = config.COLLECTION_NAME
-    batch_size: int = 20
-    max_workers: int = 5
-    delay_between_batches: float = 0.1
+    api_url: str = API_CONFIG["API_URL"]
+    qdrant_url: str = API_CONFIG["QDRANT_URL"]
+    model_name: str = API_CONFIG["MODEL_NAME"]
+    collection_name: str = API_CONFIG["COLLECTION_NAME"]
+    batch_size: int = MODEL_CONFIG["BATCH_SIZE"]
+    max_workers: int = MODEL_CONFIG["MAX_WORKERS"]
+    delay_between_batches: float = MODEL_CONFIG["DELAY_BETWEEN_BATCHES"]
 
 class SearchRequest(BaseModel):
     query: str
-    limit: int = 5
-    score_threshold: float = 0.5
+    limit: int = SEARCH_CONFIG["DEFAULT_LIMIT"]
+    score_threshold: float = SEARCH_CONFIG["SCORE_THRESHOLD"]
+    status: Optional[str]
 
-# Job status tracking
-job_status: Dict[str, Dict[str, Any]] = {}
-
-def check_dependencies():
-    """Check if all required dependencies are available"""
-    missing_deps = []
-    deps_info = {}
+async def initialize_material_service():
+    """Initialize the material service"""
+    global material_service
     
-    # Check NumPy
-    try:
-        import numpy as np
-        deps_info["numpy"] = {"status": "available", "version": np.__version__}
-    except ImportError as e:
-        missing_deps.append("numpy")
-        deps_info["numpy"] = {"status": "missing", "error": str(e)}
-    
-    # Check PyTorch
-    try:
-        import torch
-        deps_info["torch"] = {"status": "available", "version": torch.__version__}
-    except ImportError as e:
-        missing_deps.append("torch")
-        deps_info["torch"] = {"status": "missing", "error": str(e)}
-    
-    # Check Sentence Transformers
-    try:
-        from sentence_transformers import SentenceTransformer
-        deps_info["sentence_transformers"] = {"status": "available"}
-    except ImportError as e:
-        missing_deps.append("sentence-transformers")
-        deps_info["sentence_transformers"] = {"status": "missing", "error": str(e)}
-    
-    # Check Qdrant Client
-    try:
-        from qdrant_client import QdrantClient
-        deps_info["qdrant_client"] = {"status": "available"}
-    except ImportError as e:
-        missing_deps.append("qdrant-client")
-        deps_info["qdrant_client"] = {"status": "missing", "error": str(e)}
-    
-    # Check aiohttp
-    try:
-        import aiohttp
-        deps_info["aiohttp"] = {"status": "available", "version": aiohttp.__version__}
-    except ImportError as e:
-        missing_deps.append("aiohttp")
-        deps_info["aiohttp"] = {"status": "missing", "error": str(e)}
-    
-    return {
-        "all_available": len(missing_deps) == 0,
-        "missing_dependencies": missing_deps,
-        "dependencies_info": deps_info,
-        "install_command": f"pip install {' '.join(missing_deps)}" if missing_deps else None
-    }
-
-async def initialize_processor():
-    """Initialize the processor"""
-    global processor, initialization_error
-    
-    # If already initialized or failed, don't try again
-    if processor is not None or initialization_error is not None:
-        return
-    
-    try:
-        # Check dependencies first
-        deps_check = check_dependencies()
-        if not deps_check["all_available"]:
-            error_msg = f"Missing dependencies: {', '.join(deps_check['missing_dependencies'])}\n"
-            error_msg += f"Install command: {deps_check['install_command']}"
-            initialization_error = error_msg
-            logger.error(f"Initialization failed: {error_msg}")
-            return
-        
-        # Import MaterialVectorProcessor only after checking dependencies
+    if material_service is None:
         try:
-            from warehouse.material_processor import MaterialVectorProcessor
-            processor = MaterialVectorProcessor()
-            logger.info("Material Vector Processor initialized successfully")
-            initialization_error = None
+            material_service = MaterialService()
+            logger.info("Material service initialized successfully")
         except Exception as e:
-            initialization_error = f"Failed to initialize processor: {str(e)}"
-            logger.error(f"Processor initialization failed: {e}")
+            logger.error(f"Failed to initialize material service: {e}")
             logger.error(traceback.format_exc())
-            
-    except Exception as e:
-        initialization_error = f"Initialization error: {str(e)}"
-        logger.error(f"Initialization failed: {e}")
-        logger.error(traceback.format_exc())
+            raise
 
-async def ensure_processor_initialized():
-    """Ensure processor is initialized before use"""
-    if processor is None and initialization_error is None:
-        await initialize_processor()
-
-# Processor will be initialized when first endpoint is called
-# No initialization during module import
+async def ensure_material_service_initialized():
+    """Ensure material service is initialized before use"""
+    if material_service is None:
+        await initialize_material_service()
 
 # Create APIRouter
 router = APIRouter()
 
 @router.get("/")
 async def warehouse_root():
-    await ensure_processor_initialized()
+    """Root endpoint for warehouse service"""
+    await ensure_material_service_initialized()
     return {
-        "message": "Material Vector Processing API", 
-        "status": "running" if processor else "initialization_failed",
-        "initialization_error": initialization_error
+        "message": "Material Vector Processing API",
+        "status": "running" if material_service else "initialization_failed"
     }
-
-@router.get("/dependencies")
-async def check_dependencies_endpoint():
-    """Check system dependencies"""
-    return check_dependencies()
 
 @router.get("/health")
 async def health_check():
     """Health check endpoint"""
-    await ensure_processor_initialized()
-    
-    if initialization_error:
-        return {
-            "status": "unhealthy", 
-            "error": initialization_error,
-            "dependencies": check_dependencies()
-        }
-    
-    if processor is None:
-        return {
-            "status": "unhealthy", 
-            "error": "Processor not initialized",
-            "dependencies": check_dependencies()
-        }
+    await ensure_material_service_initialized()
     
     try:
         # Test model loading
         test_text = "test embedding"
-        test_vector = processor.model.encode(test_text)
+        test_vector = material_service.model.encode(test_text)
         
         return {
             "status": "healthy",
-            "model": getattr(processor.model, 'model_name', 'unknown'),
+            "model": getattr(material_service.model, 'model_name', 'unknown'),
             "vector_dimension": len(test_vector),
-            "qdrant_url": processor.qdrant_url,
-            "dependencies": check_dependencies()
+            "qdrant_url": material_service.qdrant_url
         }
     except Exception as e:
         return {
-            "status": "unhealthy", 
-            "error": str(e),
-            "dependencies": check_dependencies()
+            "status": "unhealthy",
+            "error": str(e)
         }
 
 @router.post("/process-materials")
 async def process_materials(request: ProcessingRequest, background_tasks: BackgroundTasks):
     """Process materials endpoint"""
-    await ensure_processor_initialized()
+    await ensure_material_service_initialized()
     
-    if initialization_error:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"System not properly initialized: {initialization_error}"
-        )
-    
-    if processor is None:
-        raise HTTPException(status_code=500, detail="Processor not initialized")
-    
-    # Generate job ID
-    import uuid
-    job_id = str(uuid.uuid4())
-    
-    # Initialize job status
-    job_status[job_id] = {
-        "status": "queued",
-        "progress": 0,
-        "message": "Job queued",
-        "start_time": None,
-        "end_time": None,
-        "error": None,
-        "processed": 0,
-        "failed": 0,
-        "total": 0
-    }
+    # Create new job
+    job_id = job_service.create_job()
     
     # Add background task
     background_tasks.add_task(
@@ -222,21 +102,16 @@ async def process_materials(request: ProcessingRequest, background_tasks: Backgr
 
 async def process_materials_background(job_id: str, request: ProcessingRequest):
     """Background task for processing materials"""
-    import time
-    
     try:
         # Update job status
-        job_status[job_id].update({
-            "status": "running",
-            "start_time": time.time(),
-            "message": "Processing materials..."
-        })
+        job_service.update_job(
+            job_id,
+            status="running",
+            message="Processing materials..."
+        )
         
-        # Import MaterialVectorProcessor
-        from warehouse.material_processor import MaterialVectorProcessor
-        
-        # Create processor with custom config
-        custom_processor = MaterialVectorProcessor(
+        # Create custom material service with request config
+        custom_service = MaterialService(
             api_url=request.api_url,
             qdrant_url=request.qdrant_url,
             model_name=request.model_name,
@@ -245,15 +120,16 @@ async def process_materials_background(job_id: str, request: ProcessingRequest):
         
         # Progress callback
         async def progress_callback(progress, processed, total):
-            job_status[job_id].update({
-                "progress": progress,
-                "processed": processed,
-                "total": total,
-                "message": f"Processing... {progress:.1f}% ({processed}/{total})"
-            })
+            job_service.update_job(
+                job_id,
+                progress=progress,
+                processed=processed,
+                total=total,
+                message=f"Processing... {progress:.1f}% ({processed}/{total})"
+            )
         
         # Process materials
-        result = await custom_processor.process_all_materials(
+        result = await custom_service.process_all_materials(
             batch_size=request.batch_size,
             max_workers=request.max_workers,
             delay_between_batches=request.delay_between_batches,
@@ -261,67 +137,47 @@ async def process_materials_background(job_id: str, request: ProcessingRequest):
         )
         
         # Update job status
-        job_status[job_id].update({
-            "status": "completed",
-            "progress": 100,
-            "end_time": time.time(),
-            "message": "Processing completed successfully",
-            "result": result,
-            "processed": result.get("processed", 0),
-            "failed": result.get("failed", 0),
-            "total": result.get("total_materials", 0)
-        })
+        job_service.update_job(
+            job_id,
+            status="completed",
+            progress=100,
+            message="Processing completed successfully",
+            processed=result.get("processed", 0),
+            failed=result.get("failed", 0),
+            total=result.get("total_materials", 0)
+        )
         
     except Exception as e:
         error_msg = f"Processing failed: {str(e)}"
         logger.error(f"Job {job_id} failed: {e}")
         logger.error(traceback.format_exc())
         
-        job_status[job_id].update({
-            "status": "failed",
-            "end_time": time.time(),
-            "error": error_msg,
-            "message": error_msg,
-            "traceback": traceback.format_exc()
-        })
+        job_service.update_job(
+            job_id,
+            status="failed",
+            error=error_msg,
+            message=error_msg
+        )
 
 @router.get("/job-status/{job_id}")
 async def get_job_status(job_id: str):
     """Get job status"""
-    if job_id not in job_status:
+    status = job_service.get_job(job_id)
+    if status is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
-    status = job_status[job_id].copy()
-    
-    # Calculate duration if job has started
-    if status.get("start_time"):
-        import time
-        if status.get("end_time"):
-            status["duration"] = status["end_time"] - status["start_time"]
-        else:
-            status["duration"] = time.time() - status["start_time"]
-    
     return status
 
 @router.post("/search")
 async def search_materials(request: SearchRequest):
     """Search for similar materials"""
-    await ensure_processor_initialized()
-    
-    if initialization_error:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"System not properly initialized: {initialization_error}"
-        )
-    
-    if processor is None:
-        raise HTTPException(status_code=500, detail="Processor not initialized")
+    await ensure_material_service_initialized()
     
     try:
-        results = processor.search_similar(
+        results = material_service.search_similar(
             query_text=request.query,
             limit=request.limit,
-            score_threshold=request.score_threshold
+            score_threshold=request.score_threshold,
+            status=request.status
         )
         
         # Format results
@@ -346,7 +202,7 @@ async def search_materials(request: SearchRequest):
 @router.get("/jobs")
 async def list_jobs():
     """List all jobs"""
-    return {"jobs": job_status}
+    return {"jobs": job_service.list_jobs()}
 
 @router.get("/system-info")
 async def system_info():
@@ -357,7 +213,5 @@ async def system_info():
     return {
         "platform": platform.platform(),
         "python_version": sys.version,
-        "dependencies": check_dependencies(),
-        "processor_initialized": processor is not None,
-        "initialization_error": initialization_error
+        "service_initialized": material_service is not None
     }
