@@ -71,10 +71,12 @@ export class WarehouseService {
 
   buildPrompt(question: string, context: string): string {
     return `
+    Kamu adalah asisten digital untuk perusahaan manufaktur. 
+    Jawablah dengan jelas dan ringkas dalam bahasa Indonesia.
+
     Pertanyaan:
     ${question}
     
-
 ${
   context
     ? `Data:

@@ -16,7 +16,7 @@ class MaterialService:
         self,
         api_url: str = "http://wh-backend-1:5010/api/inventory-material-all",
         qdrant_url: str = API_CONFIG["QDRANT_URL"],
-        model_name: str = API_CONFIG["MODEL_NAME"],
+        model_name: str = API_CONFIG["MODEL_NAME"],  # Akan menggunakan intfloat/multilingual-e5-small
         collection_name: str = API_CONFIG["COLLECTION_NAME"]
     ):
         self.api_url = api_url
@@ -47,6 +47,37 @@ class MaterialService:
         except Exception as e:
             logger.error(f"Error initializing dependencies: {e}")
             raise
+
+    def _prepare_text_for_e5(self, text: str, query_type: str = "passage") -> str:
+        """
+        Prepare text for E5 model with proper prefixes
+        E5 models require specific prefixes for optimal performance
+        
+        Args:
+            text: Input text
+            query_type: Either "query" or "passage"
+        
+        Returns:
+            Text with appropriate E5 prefix
+        """
+        if query_type == "query":
+            return f"query: {text}"
+        else:
+            return f"passage: {text}"
+
+    def _encode_with_e5_prefix(self, text: str, query_type: str = "passage"):
+        """
+        Encode text using E5 model with proper prefix
+        
+        Args:
+            text: Text to encode
+            query_type: Either "query" or "passage"
+            
+        Returns:
+            Encoded vector as list
+        """
+        prepared_text = self._prepare_text_for_e5(text, query_type)
+        return self.model.encode(prepared_text, normalize_embeddings=True).tolist()
 
     async def fetch_materials(self) -> List[Dict[str, Any]]:
         """Fetch materials from API"""
@@ -81,76 +112,107 @@ class MaterialService:
                 )
             else:
                 logger.info(f"Collection {self.collection_name} already exists")
+                # Check if existing collection has correct vector size
+                collection_info = self.qdrant_client.get_collection(self.collection_name)
+                existing_size = collection_info.config.params.vectors.size
+                if existing_size != self.vector_size:
+                    logger.warning(f"Collection vector size mismatch: existing={existing_size}, required={self.vector_size}")
+                    logger.warning("Consider recreating collection or using a different collection name")
                 
         except Exception as e:
             logger.error(f"Error initializing collection: {e}")
             raise
 
     def create_text_representation(self, item: Dict[str, Any]) -> str:
-        try:
-            packaging_info = "tidak ada"
-            if item.get('packaging'):
-                packaging_info = f"{item.get('packagingUnit', '')} {item.get('uom', '')} dalam kemasan {item['packaging']}"
+            """Create enhanced text representation with better keyword prioritization"""
+            try:
+                packaging_info = "tidak ada"
+                if item.get('packaging'):
+                    packaging_info = f"{item.get('packagingUnit', '')} {item.get('uom', '')} dalam kemasan {item['packaging']}"
 
-            stock_info = "tidak diketahui"
-            if item.get('stock') is not None:
-                stock_info = f"{item['stock']} {item.get('uom', '')}"
+                stock_info = "tidak diketahui"
+                if item.get('stock') is not None:
+                    stock_info = f"{item['stock']} {item.get('uom', '')}"
 
-            status = item.get('stockStatus', '').lower()
-            status_text = ""
-            keyword_text = ""
+                status = item.get('stockStatus', '').lower()
+                item_type = item.get('type', '').upper()
+                category = item.get('category', '')
 
-            type_keywords = f"{item.get('type', '')}, tipe {item.get('type', '')}, jenis {item.get('type', '')}, kategori {item.get('category', '')}, barang {item.get('type', '')}, item {item.get('type', '')}"
+                # Enhanced status description with type emphasis
+                status_text = ""
+                keyword_text = ""
 
-            if status == "critical":
-                status_text = (
-                    "STOK KRITIS: Stok saat ini berada di bawah minimum. Harus segera diisi ulang."
-                )
-                keyword_text = (
-                    "stok kritis, stok habis, kehabisan stok, kekurangan stok, refill, pengadaan, restock, perlu isi ulang, "
-                    "stok di bawah batas, urgent stock"
-                )
-            elif status == "over":
-                status_text = (
-                    "STOK OVER: Stok saat ini melebihi maksimum. Ada kelebihan stok."
-                )
-                keyword_text = (
-                    "stok over, overstock, kelebihan stok, stok menumpuk, stok berlebih, barang terlalu banyak, stok penuh, "
-                    "butuh distribusi, stok di atas batas"
-                )
-            elif status == "normal":
-                status_text = (
-                    "STOK NORMAL: Stok dalam rentang yang aman."
-                )
-                keyword_text = (
-                    "stok normal, kondisi aman, stok stabil, jumlah cukup, tidak over, tidak kritis, dalam batas normal"
+                if status == "critical":
+                    status_text = (
+                        f"STOK KRITIS {item_type}: Stok saat ini berada di bawah minimum. "
+                        f"Harus segera diisi ulang. Tipe material: {item_type}"
+                    )
+                    keyword_text = (
+                        f"stok kritis {item_type.lower()}, stok habis {item_type.lower()}, "
+                        f"kehabisan stok {item_type.lower()}, kekurangan stok {item_type.lower()}, "
+                        f"refill {item_type.lower()}, pengadaan {item_type.lower()}, "
+                        f"restock {item_type.lower()}, perlu isi ulang {item_type.lower()}, "
+                        f"stok di bawah batas {item_type.lower()}, urgent stock {item_type.lower()}, "
+                        f"critical {item_type.lower()}, kritis {item_type.lower()}"
+                    )
+                elif status == "over":
+                    status_text = (
+                        f"STOK OVER {item_type}: Stok saat ini melebihi maksimum. "
+                        f"Ada kelebihan stok. Tipe material: {item_type}"
+                    )
+                    keyword_text = (
+                        f"stok over {item_type.lower()}, overstock {item_type.lower()}, "
+                        f"kelebihan stok {item_type.lower()}, stok menumpuk {item_type.lower()}, "
+                        f"stok berlebih {item_type.lower()}, barang terlalu banyak {item_type.lower()}, "
+                        f"stok penuh {item_type.lower()}, butuh distribusi {item_type.lower()}, "
+                        f"stok di atas batas {item_type.lower()}, over {item_type.lower()}"
+                    )
+                elif status == "normal":
+                    status_text = (
+                        f"STOK NORMAL {item_type}: Stok dalam rentang yang aman. "
+                        f"Tipe material: {item_type}"
+                    )
+                    keyword_text = (
+                        f"stok normal {item_type.lower()}, kondisi aman {item_type.lower()}, "
+                        f"stok stabil {item_type.lower()}, jumlah cukup {item_type.lower()}, "
+                        f"tidak over {item_type.lower()}, tidak kritis {item_type.lower()}, "
+                        f"dalam batas normal {item_type.lower()}, normal {item_type.lower()}"
+                    )
+
+                # Enhanced type keywords with repetition for better matching
+                type_keywords = (
+                    f"{item_type}, {item_type.lower()}, tipe {item_type.lower()}, "
+                    f"jenis {item_type.lower()}, kategori {category.lower()}, "
+                    f"barang {item_type.lower()}, item {item_type.lower()}, "
+                    f"material {item_type.lower()}, produk {item_type.lower()}"
                 )
 
-            text = f"""
-    Material {item.get('materialNo', '')}: {item.get('description', '')}
-    Jenis: {item.get('category', '')} - {item.get('type', '')}
+                # Prioritize type in the beginning of text for better semantic matching
+                text = f"""
+    MATERIAL {item_type} - {item.get('materialNo', '')}: {item.get('description', '')}
+    TIPE: {item_type} - KATEGORI: {category}
+    Status: {status.upper()} → {status_text}
     Lokasi: Rak {item.get('addressRackName', '')}, Gudang {item.get('storageName', '')}, Warehouse {item.get('warehouse', '')}, Plant {item.get('plant', '')}
     Jumlah stok saat ini: {stock_info}
-    Status stok: {status.upper()} → {status_text}
     Supplier: {item.get('supplier', '')}
     Minimum stock: {item.get('minStock', '')}
     Maximum stock: {item.get('maxStock', '')}
 
-    Kata kunci: {keyword_text}, {type_keywords}
-    """.strip()
+    Kata kunci utama: {keyword_text}
+    Kata kunci tipe: {type_keywords}
+        """.strip()
 
-            return text
-        except Exception as e:
-            logger.error(f"Error creating text representation: {e}")
-            return f"Material {item.get('materialNo', 'Unknown')} - {item.get('description', 'No description')}"
-
-
+                return text
+            except Exception as e:
+                logger.error(f"Error creating text representation: {e}")
+                return f"Material {item.get('materialNo', 'Unknown')} - {item.get('description', 'No description')}"
 
     def process_item(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process single item to create vector data"""
         try:
             text = self.create_text_representation(item)
-            vector = self.model.encode(text).tolist()
+            # Use E5 model with passage prefix for document encoding
+            vector = self._encode_with_e5_prefix(text, query_type="passage")
             
             return {
                 "id": int(item.get('id', 0)),
@@ -356,7 +418,8 @@ class MaterialService:
         else: 
             logger.info(f"Status not provided")
         try:
-            query_vector = self.model.encode(query_text).tolist()
+            # Use E5 model with query prefix for search queries
+            query_vector = self._encode_with_e5_prefix(query_text, query_type="query")
             query_filter = None
             if status and isinstance(status, str):
                  query_filter = self.models.Filter(
@@ -384,4 +447,4 @@ class MaterialService:
             
         except Exception as e:
             logger.error(f"Error in search: {e}")
-            raise 
+            raise
