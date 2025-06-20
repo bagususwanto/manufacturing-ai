@@ -5,7 +5,7 @@ import axios from 'axios';
 export class OllamaService implements OnModuleInit {
   private readonly logger = new Logger(OllamaService.name);
   private readonly baseUrl = 'http://ollama:11434/api';
-  private readonly model = 'gemma3:1b'; // Ganti dengan model yang sesuai
+  private readonly model = 'llama3.2:1b'; // Ganti dengan model yang sesuai
   private isServerAvailable = false;
 
   async onModuleInit() {

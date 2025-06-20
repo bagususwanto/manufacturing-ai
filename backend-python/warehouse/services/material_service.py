@@ -87,7 +87,6 @@ class MaterialService:
             raise
 
     def create_text_representation(self, item: Dict[str, Any]) -> str:
-        """Create text representation of material item"""
         try:
             packaging_info = "tidak ada"
             if item.get('packaging'):
@@ -97,41 +96,55 @@ class MaterialService:
             if item.get('stock') is not None:
                 stock_info = f"{item['stock']} {item.get('uom', '')}"
 
-            stock_status = item.get('stockStatus', '').lower()
+            status = item.get('stockStatus', '').lower()
+            status_text = ""
+            keyword_text = ""
+
+            type_keywords = f"{item.get('type', '')}, tipe {item.get('type', '')}, jenis {item.get('type', '')}, kategori {item.get('category', '')}, barang {item.get('type', '')}, item {item.get('type', '')}"
+
+            if status == "critical":
+                status_text = (
+                    "STOK KRITIS: Stok saat ini berada di bawah minimum. Harus segera diisi ulang."
+                )
+                keyword_text = (
+                    "stok kritis, stok habis, kehabisan stok, kekurangan stok, refill, pengadaan, restock, perlu isi ulang, "
+                    "stok di bawah batas, urgent stock"
+                )
+            elif status == "over":
+                status_text = (
+                    "STOK OVER: Stok saat ini melebihi maksimum. Ada kelebihan stok."
+                )
+                keyword_text = (
+                    "stok over, overstock, kelebihan stok, stok menumpuk, stok berlebih, barang terlalu banyak, stok penuh, "
+                    "butuh distribusi, stok di atas batas"
+                )
+            elif status == "normal":
+                status_text = (
+                    "STOK NORMAL: Stok dalam rentang yang aman."
+                )
+                keyword_text = (
+                    "stok normal, kondisi aman, stok stabil, jumlah cukup, tidak over, tidak kritis, dalam batas normal"
+                )
 
             text = f"""
-            Material ini memiliki kode: {item.get('materialNo', '')}
-            Nama material: {item.get('description', '')}
-            Jenis barang: {item.get('category', '')}
-            Tipe barang: {item.get('type', '')}
-            Digunakan untuk: kebutuhan produksi atau maintenance
+    Material {item.get('materialNo', '')}: {item.get('description', '')}
+    Jenis: {item.get('category', '')} - {item.get('type', '')}
+    Lokasi: Rak {item.get('addressRackName', '')}, Gudang {item.get('storageName', '')}, Warehouse {item.get('warehouse', '')}, Plant {item.get('plant', '')}
+    Jumlah stok saat ini: {stock_info}
+    Status stok: {status.upper()} → {status_text}
+    Supplier: {item.get('supplier', '')}
+    Minimum stock: {item.get('minStock', '')}
+    Maximum stock: {item.get('maxStock', '')}
 
-            Lokasi penyimpanan:
-            - Rak: {item.get('addressRackName', '')}
-            - Gudang: {item.get('storageName', '')}
-            - Plant: {item.get('plant', '')}
-            - Warehouse: {item.get('warehouse', '')}
-
-            Pemasok: {item.get('supplier', '')}
-            Kemasan: {packaging_info}
-            Satuan: {item.get('uom', '')}
-            Harga per satuan: {item.get('price', '')}
-            Minimal order: {item.get('minOrder', '')}
-
-            Manajemen stok:
-            - MRP Type: {item.get('mrpType', '')}
-            - Minimum Stock: {item.get('minStock', '')}
-            - Maximum Stock: {item.get('maxStock', '')}
-            - Jumlah stok saat ini: {stock_info}
-            - status stok: {stock_status}
-            - Update terakhir: {item.get('stockUpdatedAt', '')} oleh {item.get('stockUpdatedBy', '')}
-            - Estimasi ketahanan stok: {item.get('leadShift', '')} shift / {item.get('leadTime', '')} jam
-            """.strip()
+    Kata kunci: {keyword_text}, {type_keywords}
+    """.strip()
 
             return text
         except Exception as e:
             logger.error(f"Error creating text representation: {e}")
             return f"Material {item.get('materialNo', 'Unknown')} - {item.get('description', 'No description')}"
+
+
 
     def process_item(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process single item to create vector data"""
