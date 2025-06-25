@@ -28,14 +28,14 @@ export class OllamaService implements OnModuleInit {
     }
   }
 
-  async ask(prompt: string): Promise<string> {
+  async ask(prompt: string, model: string): Promise<string> {
     if (!this.isServerAvailable) {
       return 'Maaf, server Ollama tidak tersedia. Silakan pastikan server Ollama berjalan.';
     }
 
     try {
       const res = await axios.post(`${this.baseUrl}/generate`, {
-        model: this.model,
+        model: model,
         prompt,
         stream: false,
       });

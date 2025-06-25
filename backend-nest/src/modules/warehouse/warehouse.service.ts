@@ -10,7 +10,7 @@ export class WarehouseService {
     private readonly httpService: HttpService,
   ) {}
 
-  async handleQuery(question: string): Promise<any> {
+  async handleQuery(question: string, model: string): Promise<any> {
     console.log('Received question:', question);
     const startTime = Date.now();
 
@@ -22,7 +22,7 @@ export class WarehouseService {
           {
             query: question,
             limit: 5,
-            score_threshold: 0.2,
+            score_threshold: 0.831,
             status: null,
           },
           {
@@ -46,18 +46,26 @@ export class WarehouseService {
       const prompt = this.buildPrompt(question, context);
       console.log('Prompt built:', prompt);
 
-      // Generate answer using Ollama
-      const answer = await this.ollama.ask(prompt);
+      // Generate answer using Ollama (we know it returns a string)
+      const answer: string = await this.ollama.ask(prompt, model);
       console.log('Answer generated:', answer);
 
       const totalMinutes = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
       console.log('Total query time:', totalMinutes, 'minutes');
 
+      // Return format yang kompatibel dengan Open WebUI
       return {
-        answer,
-        searchResults: searchResult.results,
-        totalFound: searchResult.total_found,
-        queryTime: totalMinutes,
+        message: {
+          role: 'assistant',
+          content: answer, // answer is already a string
+        },
+        done: true,
+        // Data tambahan untuk debugging (opsional)
+        metadata: {
+          searchResults: searchResult.results,
+          totalFound: searchResult.total_found,
+          queryTime: totalMinutes,
+        },
       };
     } catch (error) {
       console.error('Error in handleQuery:', error);
@@ -65,22 +73,29 @@ export class WarehouseService {
       const totalMinutes = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
       console.log('Query failed after:', totalMinutes, 'minutes');
 
-      throw error;
+      // Return error response yang tetap kompatibel
+      return {
+        message: {
+          role: 'assistant',
+          content:
+            'Maaf, terjadi kesalahan saat memproses pertanyaan Anda. Silakan coba lagi.',
+        },
+        done: true,
+        error: error.message,
+      };
     }
   }
 
   buildPrompt(question: string, context: string): string {
     return `
-    Kamu adalah asisten digital untuk perusahaan manufaktur. 
-    Jawablah dengan jelas dan ringkas dalam bahasa Indonesia.
-
+    Kamu adalah Asisten Warehouse AI, kamu akan menjawab pertanyaan dibawah dengan Bahasa Indonesia.
     Pertanyaan:
     ${question}
     
 ${
   context
     ? `Data:
-${context}
+    ${context}
 `
     : `Kamu adalah Asisten Warehouse AI, kamu akan menjawab pertanyaan tentang warehouse.`
 }
