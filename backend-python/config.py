@@ -18,8 +18,8 @@ SERVER_CONFIG: Dict[str, Any] = {
 
 # Model Configuration
 MODEL_CONFIG: Dict[str, Any] = {
-    "BATCH_SIZE": int(os.getenv("BATCH_SIZE", "20")),
-    "MAX_WORKERS": int(os.getenv("MAX_WORKERS", "5")),
+    "BATCH_SIZE": int(os.getenv("BATCH_SIZE", "32")),
+    "MAX_WORKERS": int(os.getenv("MAX_WORKERS", "4")),
     "DELAY_BETWEEN_BATCHES": float(os.getenv("DELAY_BETWEEN_BATCHES", "0.1")),
     "DEFAULT_LIMIT": int(os.getenv("MODEL_DEFAULT_LIMIT", "5")),
     "SCORE_THRESHOLD": float(os.getenv("MODEL_SCORE_THRESHOLD", "0.5")),

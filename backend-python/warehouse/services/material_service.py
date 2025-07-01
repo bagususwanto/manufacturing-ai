@@ -16,7 +16,7 @@ class MaterialService:
         self,
         api_url: str = "http://wh-backend-1:5010/api/inventory-material-all",
         qdrant_url: str = API_CONFIG["QDRANT_URL"],
-        model_name: str = API_CONFIG["MODEL_NAME"],  # Akan menggunakan intfloat/multilingual-e5-small
+        model_name: str = API_CONFIG["MODEL_NAME"],  # intfloat/multilingual-e5-small
         collection_name: str = API_CONFIG["COLLECTION_NAME"]
     ):
         self.api_url = api_url
@@ -37,9 +37,16 @@ class MaterialService:
             # Initialize sentence transformer model
             from sentence_transformers import SentenceTransformer
             logger.info(f"Loading embedding model: {self.model_name}")
-            self.model = SentenceTransformer(self.model_name)
+            
+            # For E5 models, ensure proper device and optimization settings
+            self.model = SentenceTransformer(
+                self.model_name,
+                device='cpu',  # or 'cuda' if GPU available
+                trust_remote_code=True  # Required for some E5 variants
+            )
+            
             self.vector_size = self.model.get_sentence_embedding_dimension()
-            logger.info(f"Model loaded. Vector dimension: {self.vector_size}")
+            logger.info(f"E5 model loaded. Vector dimension: {self.vector_size}")
 
         except ImportError as e:
             logger.error(f"Required dependency not available: {e}")
@@ -60,12 +67,17 @@ class MaterialService:
         Returns:
             Text with appropriate E5 prefix
         """
+        # Remove any existing prefixes to avoid duplication
+        text = text.strip()
+        if text.startswith("query:") or text.startswith("passage:"):
+            text = text.split(":", 1)[1].strip()
+        
         if query_type == "query":
             return f"query: {text}"
         else:
             return f"passage: {text}"
 
-    def _encode_with_e5_prefix(self, text: str, query_type: str = "passage"):
+    def _encode_with_e5_prefix(self, text: str, query_type: str = "passage") -> List[float]:
         """
         Encode text using E5 model with proper prefix
         
@@ -76,8 +88,22 @@ class MaterialService:
         Returns:
             Encoded vector as list
         """
-        prepared_text = self._prepare_text_for_e5(text, query_type)
-        return self.model.encode(prepared_text, normalize_embeddings=True).tolist()
+        try:
+            prepared_text = self._prepare_text_for_e5(text, query_type)
+            
+            # For E5 models, normalization is crucial for cosine similarity
+            vector = self.model.encode(
+                prepared_text, 
+                normalize_embeddings=True,
+                convert_to_tensor=False,  # Return as numpy array
+                show_progress_bar=False
+            )
+            
+            return vector.tolist()
+            
+        except Exception as e:
+            logger.error(f"Error encoding text with E5 model: {e}")
+            raise
 
     async def fetch_materials(self) -> List[Dict[str, Any]]:
         """Fetch materials from API"""
@@ -96,7 +122,7 @@ class MaterialService:
                 raise
 
     def init_collection(self):
-        """Initialize Qdrant collection"""
+        """Initialize Qdrant collection optimized for E5 embeddings"""
         try:
             collections = self.qdrant_client.get_collections()
             collection_exists = any(col.name == self.collection_name for col in collections.collections)
@@ -107,105 +133,98 @@ class MaterialService:
                     collection_name=self.collection_name,
                     vectors_config=self.models.VectorParams(
                         size=self.vector_size,
-                        distance=self.models.Distance.COSINE
+                        distance=self.models.Distance.COSINE,  # Best for normalized E5 embeddings
+                        hnsw_config=self.models.HnswConfigDiff(
+                            m=16,  # Optimal for E5 embeddings
+                            ef_construct=200,
+                            full_scan_threshold=10000
+                        )
+                    ),
+                    optimizers_config=self.models.OptimizersConfigDiff(
+                        default_segment_number=2,
+                        max_segment_size=20000,
+                        memmap_threshold=20000,
+                        indexing_threshold=20000,
+                        flush_interval_sec=5,
+                        max_optimization_threads=2
                     )
                 )
+                logger.info(f"Collection {self.collection_name} created with E5-optimized settings")
             else:
                 logger.info(f"Collection {self.collection_name} already exists")
-                # Check if existing collection has correct vector size
+                # Verify collection configuration
                 collection_info = self.qdrant_client.get_collection(self.collection_name)
                 existing_size = collection_info.config.params.vectors.size
                 if existing_size != self.vector_size:
-                    logger.warning(f"Collection vector size mismatch: existing={existing_size}, required={self.vector_size}")
-                    logger.warning("Consider recreating collection or using a different collection name")
+                    logger.error(f"Collection vector size mismatch: existing={existing_size}, required={self.vector_size}")
+                    raise ValueError("Vector size mismatch - recreate collection or use different name")
                 
         except Exception as e:
             logger.error(f"Error initializing collection: {e}")
             raise
 
     def create_text_representation(self, item: Dict[str, Any]) -> str:
-            """Create enhanced text representation with better keyword prioritization"""
-            try:
-                packaging_info = "tidak ada"
-                if item.get('packaging'):
-                    packaging_info = f"{item.get('packagingUnit', '')} {item.get('uom', '')} dalam kemasan {item['packaging']}"
+        """
+        Create optimized text representation for E5 multilingual model
+        """
+        try:
+            text_parts = []
 
-                stock_info = "tidak diketahui"
-                if item.get('stock') is not None:
-                    stock_info = f"{item['stock']} {item.get('uom', '')}"
+            # Core identity information - most important for search
+            material_no = item.get('materialNo', 'N/A')
+            description = item.get('description', 'Tanpa deskripsi')
+            item_type = item.get('type', 'N/A').upper()
+            category = item.get('category', 'N/A')
+            
+            # PRIMARY BLOCK - emphasize material type early and repeatedly  
+            text_parts.append(f"Material {item_type} {material_no}: {description}")
+            text_parts.append(f"Tipe material {item_type} kategori {category}")
 
-                status = item.get('stockStatus', '').lower()
-                item_type = item.get('type', '').upper()
-                category = item.get('category', '')
+            # Stock status with contextual information
+            status = item.get('stockStatus', 'unknown').lower()
+            stock = item.get('stock', 'N/A')
+            uom = item.get('uom', '')
+            min_stock = item.get('minStock', 'N/A')
+            max_stock = item.get('maxStock', 'N/A')
+            
+            stock_info = f"{stock} {uom}".strip()
+            
+            # Add material type context to stock status
+            if status == "critical":
+                text_parts.append(f"Stok kritis matrial {item_type} {stock_info}, material di bawah minimum {min_stock} {uom}, perlu pengadaan segera")
+            elif status == "over":
+                text_parts.append(f"Stok berlebih material {item_type} {stock_info}, material melebihi maksimum {max_stock} {uom}")
+            elif status == "normal":
+                text_parts.append(f"Stok normal material {item_type} {stock_info}, material dalam rentang {min_stock}-{max_stock} {uom}")
+            else:
+                text_parts.append(f"Stok material {item_type} {stock_info}, batas {min_stock}-{max_stock} {uom}")
 
-                # Enhanced status description with type emphasis
-                status_text = ""
-                keyword_text = ""
+            # Location information
+            warehouse = item.get('warehouse', 'N/A')
+            storage = item.get('storageName', 'N/A')
+            rack = item.get('addressRackName', 'N/A')
+            plant = item.get('plant', 'N/A')
+            text_parts.append(f"Lokasi gudang {warehouse} area {storage} rak {rack} plant {plant}")
 
-                if status == "critical":
-                    status_text = (
-                        f"STOK KRITIS {item_type}: Stok saat ini berada di bawah minimum. "
-                        f"Harus segera diisi ulang. Tipe material: {item_type}"
-                    )
-                    keyword_text = (
-                        f"stok kritis {item_type.lower()}, stok habis {item_type.lower()}, "
-                        f"kehabisan stok {item_type.lower()}, kekurangan stok {item_type.lower()}, "
-                        f"refill {item_type.lower()}, pengadaan {item_type.lower()}, "
-                        f"restock {item_type.lower()}, perlu isi ulang {item_type.lower()}, "
-                        f"stok di bawah batas {item_type.lower()}, urgent stock {item_type.lower()}, "
-                        f"critical {item_type.lower()}, kritis {item_type.lower()}"
-                    )
-                elif status == "over":
-                    status_text = (
-                        f"STOK OVER {item_type}: Stok saat ini melebihi maksimum. "
-                        f"Ada kelebihan stok. Tipe material: {item_type}"
-                    )
-                    keyword_text = (
-                        f"stok over {item_type.lower()}, overstock {item_type.lower()}, "
-                        f"kelebihan stok {item_type.lower()}, stok menumpuk {item_type.lower()}, "
-                        f"stok berlebih {item_type.lower()}, barang terlalu banyak {item_type.lower()}, "
-                        f"stok penuh {item_type.lower()}, butuh distribusi {item_type.lower()}, "
-                        f"stok di atas batas {item_type.lower()}, over {item_type.lower()}"
-                    )
-                elif status == "normal":
-                    status_text = (
-                        f"STOK NORMAL {item_type}: Stok dalam rentang yang aman. "
-                        f"Tipe material: {item_type}"
-                    )
-                    keyword_text = (
-                        f"stok normal {item_type.lower()}, kondisi aman {item_type.lower()}, "
-                        f"stok stabil {item_type.lower()}, jumlah cukup {item_type.lower()}, "
-                        f"tidak over {item_type.lower()}, tidak kritis {item_type.lower()}, "
-                        f"dalam batas normal {item_type.lower()}, normal {item_type.lower()}"
-                    )
+            # Supplier and ordering information
+            supplier = item.get('supplier', 'N/A')
+            min_order = item.get('minOrder', 'N/A')
+            lead_time = item.get('leadTime', 'N/A')
+            text_parts.append(f"Supplier {supplier}, minimum order {min_order} {uom}, lead time {lead_time} hari")
 
-                # Enhanced type keywords with repetition for better matching
-                type_keywords = (
-                    f"{item_type}, {item_type.lower()}, tipe {item_type.lower()}, "
-                    f"jenis {item_type.lower()}, kategori {category.lower()}, "
-                    f"barang {item_type.lower()}, item {item_type.lower()}, "
-                    f"material {item_type.lower()}, produk {item_type.lower()}"
-                )
+            # Additional context with type emphasis
+            price = item.get('price', 'N/A')
+            mrp_type = item.get('mrpType', 'N/A')
+            packaging = item.get('packaging', 'N/A')
+            text_parts.append(f"Harga {price}, MRP {mrp_type}, kemasan {packaging}, kategori {item_type}")
+            
+            # Join without "passage:" prefix - will be added in encoding
+            return " | ".join(text_parts)
 
-                # Prioritize type in the beginning of text for better semantic matching
-                text = f"""
-    MATERIAL {item_type} - {item.get('materialNo', '')}: {item.get('description', '')}
-    TIPE: {item_type} - KATEGORI: {category}
-    Status: {status.upper()} → {status_text}
-    Lokasi: Rak {item.get('addressRackName', '')}, Gudang {item.get('storageName', '')}, Warehouse {item.get('warehouse', '')}, Plant {item.get('plant', '')}
-    Jumlah stok saat ini: {stock_info}
-    Supplier: {item.get('supplier', '')}
-    Minimum stock: {item.get('minStock', '')}
-    Maximum stock: {item.get('maxStock', '')}
-
-    Kata kunci utama: {keyword_text}
-    Kata kunci tipe: {type_keywords}
-        """.strip()
-
-                return text
-            except Exception as e:
-                logger.error(f"Error creating text representation: {e}")
-                return f"Material {item.get('materialNo', 'Unknown')} - {item.get('description', 'No description')}"
+        except Exception as e:
+            logger.error(f"Error creating text representation for item {item.get('materialNo', 'Unknown')}: {e}")
+            # Fallback
+            return f"Material {item.get('materialNo', 'Unknown')} {item.get('description', 'No description')}"
 
     def process_item(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Process single item to create vector data"""
@@ -230,7 +249,7 @@ class MaterialService:
                     "packagingUnit": item.get('packagingUnit'),
                     "uom": item.get('uom'),
                     "price": item.get('price'),
-                    "type": item.get('type'),
+                    "type": item.get('type').lower(),
                     "category": item.get('category'),
                     "minOrder": item.get('minOrder'),
                     "mrpType": item.get('mrpType'),
@@ -317,7 +336,7 @@ class MaterialService:
             
             # Initialize collection
             self.init_collection()
-            logger.info("Vector collection initialized")
+            logger.info("Vector collection initialized with E5 optimization")
             
             # Calculate total batches
             total_batches = (total_materials + batch_size - 1) // batch_size
@@ -406,45 +425,77 @@ class MaterialService:
             raise
 
     def search_similar(
-        self,
-        query_text: str,
-        limit: int = SEARCH_CONFIG["DEFAULT_LIMIT"],
-        score_threshold: float = SEARCH_CONFIG["SCORE_THRESHOLD"],
-        status: str = None  # default None
-    ) -> List[Any]:
-        """Search for similar materials"""
-        if status:
-            logger.info(f"Received status: {status} (type: {type(status)})")
-        else: 
-            logger.info(f"Status not provided")
-        try:
-            # Use E5 model with query prefix for search queries
-            query_vector = self._encode_with_e5_prefix(query_text, query_type="query")
-            query_filter = None
-            if status and isinstance(status, str):
-                 query_filter = self.models.Filter(
-                must=[
-                    self.models.FieldCondition(
-                        key="stockStatus",
-                        match=self.models.MatchValue(value=status.strip())
-                    )
-                ]
-               
-            )
-                 
-            logger.info(f"Using query_filter: {query_filter}")
+    self,
+    query_text: str,
+    limit: int = 5,
+    score_threshold: float = 0.3,
+    filters: Optional[Dict[str, str]] = None,
+        ) -> List[Any]:
+            try:
+                query_vector = self._encode_with_e5_prefix(query_text, query_type="query")
+                
+                query_filter = None
+                if filters:
+                    must_conditions = []
+                    for key, val in filters.items():
+                        if val:
+                            must_conditions.append(
+                                self.models.FieldCondition(
+                                    key=key,
+                                    match=self.models.MatchValue(value=val.strip().lower())
+                                )
+                            )
+                    if must_conditions:
+                        query_filter = self.models.Filter(must=must_conditions)
+                        logger.info(f"Applied filters: {filters}")
+                
+                results = self.qdrant_client.search(
+                    collection_name=self.collection_name,
+                    query_vector=query_vector,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                    with_vectors=False,
+                    query_filter=query_filter
+                )
+                logger.info(f"Search completed: {len(results)} results found")
+                return results
+            except Exception as e:
+                logger.error(f"Error in search: {e}")
+                raise
 
+
+    def batch_search(
+        self,
+        queries: List[str],
+        limit: int = SEARCH_CONFIG["DEFAULT_LIMIT"],
+        score_threshold: float = SEARCH_CONFIG["SCORE_THRESHOLD"]
+    ) -> List[List[Any]]:
+        """
+        Perform batch search for multiple queries
+        """
+        try:
+            # Encode all queries at once for efficiency
+            query_vectors = []
+            for query in queries:
+                vector = self._encode_with_e5_prefix(query, query_type="query")
+                query_vectors.append(vector)
             
-            return self.qdrant_client.search(
-                collection_name=self.collection_name,
-                query_vector=query_vector,
-                limit=limit,
-                score_threshold=score_threshold,
-                with_payload=True,
-                with_vectors=False,
-                query_filter=query_filter 
-            )
+            results = []
+            for i, vector in enumerate(query_vectors):
+                search_results = self.qdrant_client.search(
+                    collection_name=self.collection_name,
+                    query_vector=vector,
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                results.append(search_results)
+                logger.info(f"Batch search {i+1}/{len(queries)}: {len(search_results)} results")
+            
+            return results
             
         except Exception as e:
-            logger.error(f"Error in search: {e}")
+            logger.error(f"Error in batch search: {e}")
             raise

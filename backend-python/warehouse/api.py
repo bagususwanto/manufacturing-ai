@@ -29,7 +29,7 @@ class SearchRequest(BaseModel):
     query: str
     limit: int = SEARCH_CONFIG["DEFAULT_LIMIT"]
     score_threshold: float = SEARCH_CONFIG["SCORE_THRESHOLD"]
-    status: Optional[str]
+    filters: Optional[Dict[str, str]] = None
 
 async def initialize_material_service():
     """Initialize the material service"""
@@ -172,12 +172,16 @@ async def search_materials(request: SearchRequest):
     """Search for similar materials"""
     await ensure_material_service_initialized()
     
+    print("Received request:", request)
+    print("Parsed filters:", request.filters)
+
+    
     try:
         results = material_service.search_similar(
             query_text=request.query,
             limit=request.limit,
             score_threshold=request.score_threshold,
-            status=request.status
+            filters=request.filters
         )
         
         # Format results
