@@ -5,7 +5,7 @@ import { WarehouseModule } from './modules/warehouse/warehouse.module';
 import { ConfigModule } from '@nestjs/config';
 import { HttpModule } from './shared/http/http.module';
 import { OpenWebuiModule } from './shared/open-webui/open-webui.module';
-import { OllamaModule } from './shared/llm/ollama.module';
+// import { OllamaModule } from './shared/llm/ollama.module';
 
 @Module({
   imports: [
@@ -13,7 +13,7 @@ import { OllamaModule } from './shared/llm/ollama.module';
       isGlobal: true, // supaya bisa diakses di seluruh app tanpa import ulang
     }),
     WarehouseModule,
-    OllamaModule,
+    // OllamaModule,
     HttpModule,
     OpenWebuiModule,
   ],

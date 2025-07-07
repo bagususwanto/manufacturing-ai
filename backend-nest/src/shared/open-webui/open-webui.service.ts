@@ -13,7 +13,7 @@ export class OpenWebuiService {
 
   private models = ['warehouse'];
   private modelMapping = {
-    warehouse: 'gemma2:2b',
+    warehouse: 'gemma3:1b',
   };
 
   private capitalizeFirstLetter(str: string): string {
@@ -229,7 +229,7 @@ export class OpenWebuiService {
   ): Promise<answerResponse> {
     if (model === 'warehouse') {
       // Use the warehouse service for the 'warehouse' model
-      return await this.warehouseService.handleQuery(question, internalModel);
+      return await this.warehouseService.handleQuery(question);
     } else {
       // For other models, you can implement additional logic here
       return {

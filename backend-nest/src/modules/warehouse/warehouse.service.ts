@@ -1,80 +1,67 @@
+import { GoogleGenAI } from '@google/genai';
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
-import { OllamaService } from 'src/shared/llm/ollama.service';
 import { firstValueFrom } from 'rxjs';
+import { answerResponse } from 'src/shared/interfaces/response.interface';
 
 @Injectable()
 export class WarehouseService {
-  constructor(
-    private readonly ollama: OllamaService,
-    private readonly httpService: HttpService,
-  ) {}
+  private ai: GoogleGenAI;
 
-  async handleQuery(question: string, model: string): Promise<any> {
-    console.log('Received question:', question);
+  constructor(private readonly httpService: HttpService) {
+    this.ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+    });
+  }
+
+  async handleQuery(question: string): Promise<answerResponse> {
     const startTime = Date.now();
 
     try {
-      const classifiedQuestion = this.classifyQueryPrompt(question);
-      const classified = await this.ollama.ask(classifiedQuestion, 'phi3:mini');
-      console.log('Raw response from Ollama:', classified);
+      // 1. Klasifikasi pertanyaan
+      const classifiedPrompt = this.classifyQueryPrompt(question);
+      const classified = await this.askGemini(classifiedPrompt);
+      console.log('Raw classification result:', classified);
 
       const parsed = this.extractJson(classified);
-      console.log('Parsed JSON:', parsed);
-
-      // Validasi struktur JSON dulu
-      const stockStatus = parsed.stockStatus ?? null;
-      const materialType = parsed.type ?? null;
       const filters: any = {};
-      if (stockStatus) filters.stockStatus = stockStatus;
-      if (materialType) filters.type = materialType;
+      if (parsed.stockStatus) filters.stockStatus = parsed.stockStatus;
+      if (parsed.type) filters.type = parsed.type;
 
-      // Call Python API using HttpService
+      // 2. Query ke API FastAPI
       const response = await firstValueFrom(
         this.httpService.post(
           `${process.env.FASTAPI_URL}/warehouse/search`,
           {
             query: question,
-            limit: 5,
-            score_threshold: 0.2,
+            limit: 10,
+            score_threshold: 0.8,
             filters: filters,
           },
-          {
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          },
+          { headers: { 'Content-Type': 'application/json' } },
         ),
       );
+      console.log('Search response:', response.data);
 
       const searchResult = response.data;
-      console.log('Search results from Python API:', searchResult);
-
-      // Extract context from search results
       const context = searchResult.results
         .map((r: any) => r.payload?.text)
-        .filter((text: string) => text)
-        .join('\n\n'); // ← 2 enter antar hasil
+        .filter(Boolean)
+        .join('\n\n');
 
-      // Build prompt with question and context
+      // 3. Bangun prompt dan generate jawaban
       const prompt = this.buildPrompt(question, context);
-      console.log('Prompt built:', prompt);
-
-      // Generate answer using Ollama (we know it returns a string)
-      const answer: string = await this.ollama.ask(prompt, model);
-      console.log('Answer generated:', answer);
+      const answer = await this.askGemini(prompt);
 
       const totalMinutes = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
-      console.log('Total query time:', totalMinutes, 'minutes');
 
-      // Return format yang kompatibel dengan Open WebUI
+      // Return response in the expected format
       return {
         message: {
           role: 'assistant',
-          content: answer, // answer is already a string
+          content: answer,
         },
         done: true,
-        // Data tambahan untuk debugging (opsional)
         metadata: {
           searchResults: searchResult.results,
           totalFound: searchResult.total_found,
@@ -83,16 +70,10 @@ export class WarehouseService {
       };
     } catch (error) {
       console.error('Error in handleQuery:', error);
-
-      const totalMinutes = ((Date.now() - startTime) / 1000 / 60).toFixed(1);
-      console.log('Query failed after:', totalMinutes, 'minutes');
-
-      // Return error response yang tetap kompatibel
       return {
         message: {
           role: 'assistant',
-          content:
-            'Maaf, terjadi kesalahan saat memproses pertanyaan Anda. Silakan coba lagi.',
+          content: 'Maaf, terjadi kesalahan saat memproses pertanyaan Anda.',
         },
         done: true,
         error: error.message,
@@ -100,63 +81,100 @@ export class WarehouseService {
     }
   }
 
-  buildPrompt(question: string, context: string): string {
-    return `
-  Kamu adalah Asisten Warehouse berbahasa Indonesia. Jawablah pertanyaan berikut dengan jelas, lengkap, dan profesional.
-  Gunakan informasi berikut secara implisit, **tanpa menyebutkan atau merujuk pada sumber data atau konteks**, dan jawab seolah kamu tahu kondisi gudang secara langsung. Berikan detail jika tersedia.
+  private async askGemini(prompt: string): Promise<string> {
+    console.log('Asking Gemini with prompt:', prompt);
 
-  Pertanyaan:
-  ${question}
+    const modelFallbacks = [
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite-preview-06-17',
+      'gemma-3-27b-it',
+    ];
 
-  ${
-    context
-      ? `Informasi internal gudang:
-  ${context}`
-      : `Jika tidak ada informasi tambahan, jawab berdasarkan pengetahuan umum tentang warehouse.`
+    for (const model of modelFallbacks) {
+      try {
+        console.log(`Trying model: ${model}`);
+        const response = await this.ai.models.generateContent({
+          model,
+          contents: prompt,
+        });
+
+        const answer = response.text?.trim();
+        if (answer) return answer;
+
+        console.warn(`Model ${model} returned empty response.`);
+      } catch (err: any) {
+        const message = err?.message?.toLowerCase() || '';
+        const isQuotaError =
+          err?.response?.status === 429 ||
+          message.includes('quota') ||
+          message.includes('rate') ||
+          message.includes('exceeded') ||
+          message.includes('limit');
+
+        console.warn(`Model ${model} error: ${err.message}`);
+
+        // Kalau bukan error quota/limit, langsung throw
+        if (!isQuotaError) {
+          throw new Error(`Model ${model} gagal: ${err.message}`);
+        }
+
+        // Kalau quota error, lanjut ke model berikutnya
+        console.info(
+          `Model ${model} kena limit, lanjut ke fallback berikutnya...`,
+        );
+      }
+    }
+
+    throw new Error('Semua model gagal merespon.');
   }
+
+  private buildPrompt(question: string, context: string): string {
+    return `
+Kamu adalah Asisten Warehouse berbahasa Indonesia. Jawablah pertanyaan berikut dengan jelas, lengkap, dan detail.
+
+Pertanyaan:
+${question}
+
+${
+  context
+    ? `Informasi internal gudang:
+${context}`
+    : `Jawab berdasarkan pengetahuan umum tentang warehouse.`
+}
     `.trim();
   }
 
-  classifyQueryPrompt(question: string) {
+  private classifyQueryPrompt(question: string): string {
     return `
-Tugas kamu adalah mengambil informasi *filter* dari permintaan user tentang kondisi stok gudang.
+Tugas kamu adalah mengklasifikasi pertanyaan user ke dalam JSON seperti:
 
-Jawaban dalam format JSON, hanya dengan key:
-- stockStatus: salah satu dari ["critical", "normal", "over"] atau null jika tidak disebut
-- type: salah satu dari ["DIRECT", "INDIRECT"] atau null jika tidak disebut
+{
+  "stockStatus": "critical" | "over" | null,
+  "type": "DIRECT" | "INDIRECT" | null
+}
 
-Keterangan:
-- "critical" berarti stok hampir habis / butuh pengadaan / dibawah minimum
-- "normal" berarti stok cukup / aman
-- "over" berarti stok berlebih / di atas maksimum
-- "DIRECT" dan "INDIRECT" adalah tipe material
+Jika pertanyaan tidak relevan dengan status stok dan tipe material, kembalikan null untuk kedua field.
 
 Contoh:
-
-Input: status stok hampir habis material direct  
+Input: status stok hampir habis material direct
 Output:
 {
   "stockStatus": "critical",
   "type": "DIRECT"
 }
 
-Sekarang proses input berikut:
-
 Input: ${question}
 Output:
-  `.trim();
+    `.trim();
   }
 
-  extractJson(text: string): any {
+  private extractJson(text: string): any {
     try {
-      // Cari blok JSON pertama di dalam string
       const jsonMatch = text.match(/\{[\s\S]*?\}/);
       if (!jsonMatch) throw new Error('No JSON found');
-
-      const jsonStr = jsonMatch[0];
-      return JSON.parse(jsonStr);
+      return JSON.parse(jsonMatch[0]);
     } catch (err) {
-      console.error('Failed to extract JSON:', err);
+      console.error('JSON parse error:', err);
       return { stockStatus: null, type: null };
     }
   }

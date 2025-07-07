@@ -198,6 +198,14 @@ class MaterialService:
                 text_parts.append(f"Stok normal material {item_type} {stock_info}, material dalam rentang {min_stock}-{max_stock} {uom}")
             else:
                 text_parts.append(f"Stok material {item_type} {stock_info}, batas {min_stock}-{max_stock} {uom}")
+                
+            # Ketahanan stock dalam shift dan hari
+            lead_shift = item.get('leadShift', 'N/A')
+            lead_time = item.get('leadTime', 'N/A')
+            stock_updated_at = item.get('stockUpdatedAt', 'N/A')
+            stock_updated_by = item.get('stockUpdatedBy', 'N/A')    
+            
+            text_parts.append(f"Ketahanan stok {lead_shift} shift, sekitar {lead_time} hari, terakhir diperbarui pada {stock_updated_at} oleh {stock_updated_by}")
 
             # Location information
             warehouse = item.get('warehouse', 'N/A')
@@ -209,8 +217,7 @@ class MaterialService:
             # Supplier and ordering information
             supplier = item.get('supplier', 'N/A')
             min_order = item.get('minOrder', 'N/A')
-            lead_time = item.get('leadTime', 'N/A')
-            text_parts.append(f"Supplier {supplier}, minimum order {min_order} {uom}, lead time {lead_time} hari")
+            text_parts.append(f"Supplier {supplier}, minimum order {min_order} {uom}")
 
             # Additional context with type emphasis
             price = item.get('price', 'N/A')

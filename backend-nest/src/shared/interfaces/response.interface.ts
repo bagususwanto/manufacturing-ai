@@ -1,12 +1,14 @@
+// src/interfaces/response.interface.ts
 export interface answerResponse {
   message: {
-    role: string;
+    role: 'assistant' | 'user' | 'system';
     content: string;
   };
   done: boolean;
   metadata?: {
     searchResults?: any[];
     totalFound?: number;
-    queryTime?: number;
+    queryTime?: string;
   };
+  error?: string;
 }

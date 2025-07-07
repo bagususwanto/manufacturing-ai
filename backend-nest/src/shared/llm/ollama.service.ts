@@ -4,7 +4,7 @@ import axios from 'axios';
 @Injectable()
 export class OllamaService implements OnModuleInit {
   private readonly logger = new Logger(OllamaService.name);
-  private readonly baseUrl = 'http://ollama:11434/api';
+  private readonly baseUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
   private readonly model = 'gemma3:1b'; // Ganti dengan model yang sesuai
   private isServerAvailable = false;
 
@@ -14,7 +14,7 @@ export class OllamaService implements OnModuleInit {
 
   private async checkServerVersion() {
     try {
-      const response = await axios.get(`${this.baseUrl}/version`);
+      const response = await axios.get(`${this.baseUrl}/api/version`);
       this.isServerAvailable = true;
       this.logger.log(
         `Connected to Ollama server version: ${response.data.version}`,
@@ -34,7 +34,7 @@ export class OllamaService implements OnModuleInit {
     }
 
     try {
-      const res = await axios.post(`${this.baseUrl}/generate`, {
+      const res = await axios.post(`${this.baseUrl}/api/generate`, {
         model: model,
         prompt,
         stream: false,

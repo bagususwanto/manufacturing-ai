@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Res, Headers } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Res,
+  Headers,
+  Param,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { ChatCompletionRequest } from 'src/shared/open-webui/interfaces/open-webui.interface';
 import { OpenWebuiService } from './open-webui.service';
@@ -19,7 +27,8 @@ export class OpenWebuiController {
     @Headers('authorization') auth?: string,
   ) {
     try {
-      return this.openWebuiService.chatCompletions(body, res);
+      // Pass auth parameter to service method
+      return await this.openWebuiService.chatCompletions(body, res, auth);
     } catch (error) {
       console.error('Error in chat completions:', error);
       return res.status(500).json({
@@ -40,8 +49,9 @@ export class OpenWebuiController {
     };
   }
 
+  // Fixed: Use @Param instead of @Body for URL parameter
   @Get('v1/models/:model')
-  getModelInfo(@Body('model') model: string) {
+  getModelInfo(@Param('model') model: string) {
     return this.openWebuiService.getModelInfo(model);
   }
 }
