@@ -4,7 +4,7 @@ from typing import Dict, Any
 # API Configuration
 API_CONFIG: Dict[str, Any] = {
     "API_URL": os.getenv("API_URL", "http://wh-backend-1:5010/api/inventory-material-all"),
-    "QDRANT_URL": os.getenv("QDRANT_URL", "http://qdrant:6333"),
+    "QDRANT_URL": os.getenv("QDRANT_URL", "http://manufacturing-ai-qdrant-1:6333"),
     "MODEL_NAME": os.getenv("MODEL_NAME", "intfloat/multilingual-e5-small"),
     "COLLECTION_NAME": os.getenv("COLLECTION_NAME", "material_vectors"),
 }

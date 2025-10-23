@@ -60,8 +60,18 @@ cd manufacturing-ai
 2. Start the services using Docker Compose:
 
 ```bash
+docker network create my-network
 docker-compose up -d
 ```
+
+3. Processing Data to Qdrant with Postman
+
+```bash
+{{NEST_URL}}/warehouse/material-processing/process
+```
+
+access Qdrant collections at
+http://localhost:6333/dashboard
 
 ### Development Setup
 
@@ -97,5 +107,8 @@ python main.py
 ├── backend-python/        # Python Backend Service
 │   ├── production/       # Production related services
 │   └── warehouse/        # Warehouse management
+├── qdrant_storage/        # Qdrant Storage
+│   └── aliases/           # Qdrant aliases
+|   └── collections/       # Qdrant collections
 └── docker-compose.yml    # Docker composition
 ```
