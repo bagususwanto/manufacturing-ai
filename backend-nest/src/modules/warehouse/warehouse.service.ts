@@ -1,15 +1,18 @@
 import { GoogleGenAI } from '@google/genai';
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
-import { firstValueFrom } from 'rxjs';
 import { answerResponse } from 'src/shared/interfaces/response.interface';
 import suggestions from './data/suggestions.json';
+import { RetrievalService } from './retrieval.service';
 
 @Injectable()
 export class WarehouseService {
   private ai: GoogleGenAI;
 
-  constructor(private readonly httpService: HttpService) {
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly retrievalService: RetrievalService,
+  ) {
     this.ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
     });
@@ -41,10 +44,13 @@ ${this.getSuggestions()
       }
 
       // ✅ Lanjut kalau intent jelas
-      const { context, searchResult } = await this.retrieveContext(
+      const { context, response } = await this.retrieveContext(
         question,
         intent,
       );
+
+      console.log('Context:', context);
+      console.log('Response:', response);
 
       const prompt = this.buildPrompt(question, context);
       const answer = await this.askGemini(prompt);
@@ -56,8 +62,7 @@ ${this.getSuggestions()
         done: true,
         metadata: {
           intent,
-          searchResults: searchResult.results,
-          totalFound: searchResult.total_found,
+          searchResults: response?.results || [],
           queryTime: totalMinutes,
         },
       };
@@ -77,106 +82,133 @@ ${this.getSuggestions()
   // ✅ STEP 1: Intent Classification
   private async classifyIntent(question: string): Promise<any> {
     const prompt = `
-  Kamu adalah sistem klasifikasi intent untuk asisten warehouse. 
-  Tugasmu menentukan maksud utama pertanyaan user.
+Kamu adalah sistem klasifikasi intent untuk asisten warehouse material dan inventory.
+Tugasmu adalah mengembalikan JSON **valid saja** yang menjelaskan maksud utama dari pertanyaan user.
 
-  Klasifikasikan input berikut menjadi JSON valid.
+### Format Output (JSON Only)
+{
+  "intent": string,
+  "materialTarget": string | null,
+  "reportType": "daily" | "weekly" | "monthly" | "range" | null,
+  "type": "DIRECT" | "INDIRECT" | null,
+  "organizationTarget": string | null
+}
 
-  Format JSON:
-  {
-    "intent": string,
-    "stockStatus": "critical" | "over" | "normal" | null,
-    "materialTarget": string | null,
-    "comparison": boolean,
-    "reportType": "daily" | "weekly" | "monthly" | null,
-    "type": "DIRECT" | "INDIRECT" | null
-  }
+### Daftar intent yang valid:
+- "cek_stok" → untuk melihat stok material tertentu
+- "stok_hampir_habis" → untuk mencari material dengan stok menipis
+- "stok_over" → untuk mencari material yang stoknya berlebih
+- "lokasi_material" → untuk mengetahui lokasi penyimpanan suatu material
+- "penerimaan" → untuk menanyakan penerimaan material (barang masuk)
+- "pengeluaran" → untuk menanyakan pengeluaran material (barang keluar)
+- "laporan" → untuk menampilkan laporan aktivitas atau stok (harian, mingguan, bulanan, atau range)
+- "bandingkan_stok" → untuk membandingkan stok antar lokasi / gudang
+- "aktivitas_gudang" → untuk melihat aktivitas gudang (penerimaan, pengeluaran, dsb)
+- "material_tidak_bergerak" → untuk mencari material yang tidak ada pergerakan stok
+- "forecasting" → untuk meminta prediksi kebutuhan atau stok di masa depan
+- "umum" → untuk pertanyaan umum di luar konteks warehouse
 
-  Pilihan intent yang valid:
-  - "cek_stok"
-  - "stok_hampir_habis"
-  - "stok_over"
-  - "lokasi_material"
-  - "penerimaan"
-  - "pengeluaran"
-  - "laporan"
-  - "bandingkan_stok"
-  - "aktivitas_gudang"
-  - "material_tidak_bergerak"
-  - "forecasting"
-  - "umum"
+### Aturan tambahan:
+- Jika user menanyakan jumlah, kondisi, atau keberadaan stok → intent = "cek_stok"
+- Jika menyinggung stok menipis atau “hampir habis” → intent = "stok_hampir_habis"
+- Jika menyinggung stok berlebih → intent = "stok_over"
+- Jika menanyakan lokasi material → intent = "lokasi_material"
+- Jika menyebut penerimaan, barang masuk, GR → intent = "penerimaan"
+- Jika menyebut pengeluaran, barang keluar, issue → intent = "pengeluaran"
+- Jika user membandingkan stok antar lokasi/gudang → intent = "bandingkan_stok" dan "comparison": true
+- Jika pertanyaan terkait laporan → intent = "laporan" dan isi "reportType" (daily, weekly, monthly, atau range)
+- Jika menyinggung aktivitas gudang secara umum → intent = "aktivitas_gudang"
+- Jika menyebut material tidak bergerak / stagnant → intent = "material_tidak_bergerak"
+- Jika menyinggung prediksi, estimasi, atau forecast → intent = "forecasting"
+- Jika tidak cocok dengan kategori di atas → intent = "umum"
 
-  Aturan:
-  - Jika user tanya informasi stok → intent: "cek_stok"
-  - Jika tanya material hampir habis → "stok_hampir_habis"
-  - Jika tanya perbandingan stok antar gudang → bandingkan_stok + "comparison": true
-  - Jika tanya laporan → intent "laporan" + jenis reportType jika ada
-  - Jika tidak bisa dikenali → intent "umum"
-  - Isi null untuk field yang tidak relevan
+### Aturan untuk material:
+- "materialTarget" dapat berupa **nama material** (contoh: "wire galvanis") atau **kode material** (contoh: "B851-308084")
+- Jika ada kata atau kode yang tampak seperti ID material (huruf + angka, seperti "B851-308084" atau "B851-45"), masukkan ke dalam "materialTarget"
+- Jika tidak ada material spesifik disebutkan, isi dengan null
+- Selalu isi "null" untuk field yang tidak relevan
+- Jangan menambahkan teks lain di luar JSON (tidak boleh ada penjelasan tambahan)
 
-  Contoh:
-  Input: "cek stok besi ulir"
-  Output: {"intent":"cek_stok","stockStatus":null,"materialTarget":"besi ulir","comparison":false,"reportType":null,"type":null}
+### Contoh:
+Input: "cek stok wire galvanis"
+Output: {"intent":"cek_stok","materialTarget":"wire galvanis","reportType":null,"type":null,"organizationTarget":null}
 
-  Input: "tampilkan laporan harian gudang"
-  Output: {"intent":"laporan","stockStatus":null,"materialTarget":null,"comparison":false,"reportType":"daily","type":null}
+Input: "cek stok B851-308084"
+Output: {"intent":"cek_stok","materialTarget":"B851-308084","reportType":null,"type":null,"organizationTarget":null}
 
-  Input: "${question}"
-  Output:
-  `.trim();
+Input: "tampilkan laporan bulanan gudang consumable"
+Output: {"intent":"laporan","materialTarget":null,"reportType":"monthly","type":null,"organizationTarget":"consumable"}
+
+Input: "bandingkan stok antara gudang karawang dan packing store"
+Output: {"intent":"bandingkan_stok","materialTarget":null,"reportType":null,"type":null,"organizationTarget":null}
+
+Sekarang klasifikasikan input berikut:
+"${question}"
+
+Output:
+`.trim();
 
     const result = await this.askGemini(prompt);
     return this.extractJson(result);
   }
 
   // ✅ STEP 2: Context Retrieval (baru)
-  private async retrieveContext(
-    question: string,
-    intent: any,
-  ): Promise<{ context: string; searchResult: any }> {
-    const filters: any = {};
+  private async retrieveContext(question: string, intent: any): Promise<any> {
+    const {
+      intent: intentName,
+      materialTarget,
+      reportType,
+      organizationTarget,
+    } = intent;
 
-    if (intent.stockStatus) filters.stockStatus = intent.stockStatus;
-    if (intent.type) filters.type = intent.type;
+    let response: any;
 
-    // Tentukan endpoint FastAPI berdasarkan intent
-    let endpoint = '/warehouse/search';
-    // switch (intent.intent) {
-    //   case 'penerimaan':
-    //     endpoint = '/warehouse/receiving/search';
-    //     break;
-    //   case 'pengeluaran':
-    //     endpoint = '/warehouse/issue/search';
-    //     break;
-    //   default:
-    //     endpoint = '/warehouse/search';
-    // }
+    switch (intentName) {
+      case 'cek_stok':
+        response = await this.retrievalService.getStock(materialTarget);
+        break;
+      case 'stok_hampir_habis':
+        response = await this.retrievalService.getCriticalStock();
+        break;
+      case 'stok_over':
+        response = await this.retrievalService.getOverStock();
+        break;
+      case 'lokasi_material':
+        response =
+          await this.retrievalService.getMaterialLocation(materialTarget);
+        break;
+      case 'bandingkan_stok':
+        response = await this.retrievalService.compareStock(organizationTarget);
+        break;
+      case 'aktivitas_gudang':
+        response =
+          await this.retrievalService.getWarehouseActivity(organizationTarget);
+        break;
+      case 'laporan':
+        response = await this.retrievalService.generateReport(
+          reportType,
+          organizationTarget,
+        );
+        break;
+      case 'material_tidak_bergerak':
+        response = await this.retrievalService.getInactiveMaterials();
+        break;
+      case 'forecasting':
+        response = await this.retrievalService.getForecast(materialTarget);
+        break;
+      case 'umum':
+      default:
+        response = {};
+        break;
+    }
 
-    const url = `${process.env.FASTAPI_URL}${endpoint}`;
-    console.log(`Fetching context from: ${url}`);
+    const context = Array.isArray(response)
+      ? response.map((r) => JSON.stringify(r)).join('\n')
+      : typeof response === 'object'
+        ? JSON.stringify(response, null, 2)
+        : String(response || '');
 
-    const response = await firstValueFrom(
-      this.httpService.post(
-        url,
-        {
-          query: question,
-          limit: 10,
-          score_threshold: 0.8,
-          filters,
-        },
-        { headers: { 'Content-Type': 'application/json' } },
-      ),
-    );
-
-    const searchResult = response.data;
-
-    const context =
-      searchResult.results
-        ?.map((r: any) => r.payload?.text)
-        ?.filter(Boolean)
-        ?.join('\n\n') || '';
-
-    return { context, searchResult };
+    return { context, response };
   }
 
   // ✅ STEP 3: Response Generator
@@ -208,17 +240,24 @@ ${this.getSuggestions()
   // ✅ STEP 4: Prompt Builder
   private buildPrompt(question: string, context: string): string {
     return `
-Kamu adalah Asisten Warehouse berbahasa Indonesia. Jawablah pertanyaan berikut dengan jelas, lengkap, dan berbasis data internal jika tersedia.
+Kamu adalah Asisten Warehouse berbahasa Indonesia.
+Jawabanmu harus singkat tapi jelas, berdasarkan konteks internal jika ada.
 
-Pertanyaan:
+Pertanyaan pengguna:
 ${question}
 
 ${
   context
-    ? `Informasi internal gudang:\n${context}`
-    : `Tidak ada data internal yang relevan. Jawab secara umum berdasarkan logika warehouse.`
+    ? `Data warehouse relevan:\n${context}`
+    : `Tidak ada data internal ditemukan.`
 }
-    `.trim();
+
+Instruksi tambahan:
+- Jika pertanyaan tentang stok, tampilkan angka dan kondisi stok jika ada.
+- Jika tentang laporan, berikan ringkasan (harian/mingguan/bulanan).
+- Jika perbandingan, buat tabel teks sederhana antar gudang.
+- Jika tidak ada data yang cocok, beri jawaban umum dengan saran tindakan selanjutnya.
+`.trim();
   }
 
   // ✅ JSON Extractor
