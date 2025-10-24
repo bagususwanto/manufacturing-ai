@@ -6,6 +6,7 @@ export interface answerResponse {
   };
   done: boolean;
   metadata?: {
+    intent?: any;
     searchResults?: any[];
     totalFound?: number;
     queryTime?: string;

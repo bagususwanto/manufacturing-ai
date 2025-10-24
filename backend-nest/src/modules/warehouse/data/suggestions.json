@@ -1,0 +1,34 @@
+[
+  {
+    "title": ["Cek stok material", "berdasarkan nama atau kode"],
+    "content": "Tolong tampilkan stok terbaru untuk material dengan nama atau kode tertentu. Misalnya: 'Cek stok WIRE GALVANIS'."
+  },
+  {
+    "title": ["Tampilkan daftar", "material yang hampir habis"],
+    "content": "Tolong tampilkan daftar material yang stoknya sudah di bawah batas minimum agar bisa segera diajukan untuk restock."
+  },
+  {
+    "title": ["Buat laporan cepat", "untuk stok gudang hari ini"],
+    "content": "Buatkan ringkasan laporan stok gudang hari ini, termasuk total material masuk, keluar, dan sisa stok."
+  },
+  {
+    "title": ["Identifikasi material", "yang tidak bergerak lama"],
+    "content": "Tolong tampilkan daftar material yang tidak pernah keluar selama 3 bulan terakhir, agar bisa dievaluasi apakah masih dibutuhkan."
+  },
+  {
+    "title": ["Hitung kebutuhan", "pengisian ulang stok"],
+    "content": "Hitungkan berapa banyak stok yang perlu dipesan ulang berdasarkan rata-rata pemakaian bulanan dan waktu pengiriman supplier."
+  },
+  {
+    "title": ["Pantau aktivitas gudang", "hari ini"],
+    "content": "Tampilkan aktivitas gudang hari ini — seperti berapa transaksi material masuk, keluar, dan siapa yang memprosesnya."
+  },
+  {
+    "title": ["Bandingkan stok", "antara dua gudang"],
+    "content": "Tolong bandingkan stok material tertentu antara gudang pusat dan gudang proyek. Misalnya: 'Bandingkan stok pipa PVC di gudang pusat dan gudang timur'."
+  },
+  {
+    "title": ["Buat laporan otomatis", "mingguan untuk pimpinan"],
+    "content": "Buatkan laporan otomatis mingguan yang berisi total material masuk, keluar, stok akhir, dan nilai inventori untuk diserahkan ke pimpinan."
+  }
+]
