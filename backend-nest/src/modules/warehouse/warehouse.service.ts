@@ -46,6 +46,8 @@ ${this.getSuggestions()
         intent,
       );
 
+      console.log('Retrieved context:', context);
+
       const prompt = this.buildPrompt(question, context);
       const answer = await this.askGemini(prompt);
 
@@ -77,53 +79,72 @@ ${this.getSuggestions()
   // ✅ STEP 1: Intent Classification
   private async classifyIntent(question: string): Promise<any> {
     const prompt = `
-  Kamu adalah sistem klasifikasi intent untuk asisten warehouse. 
-  Tugasmu menentukan maksud utama pertanyaan user.
+Kamu adalah sistem klasifikasi intent untuk asisten warehouse (gudang material & inventory). 
+Tugasmu adalah mengembalikan hasil klasifikasi dalam format JSON **valid saja** tanpa teks tambahan di luar JSON.
 
-  Klasifikasikan input berikut menjadi JSON valid.
+---
 
-  Format JSON:
-  {
-    "intent": string,
-    "stockStatus": "critical" | "over" | "normal" | null,
-    "materialTarget": string | null,
-    "comparison": boolean,
-    "reportType": "daily" | "weekly" | "monthly" | null,
-    "type": "DIRECT" | "INDIRECT" | null
-  }
+### Format Output (JSON Only)
+{
+  "intent": "cek_stok" | "stok_hampir_habis" | "stok_over" | "lokasi_material" | "penerimaan" | "pengeluaran" | "laporan" | "bandingkan_stok" | "aktivitas_gudang" | "material_tidak_bergerak" | "forecasting" | "umum",
+  "stockStatus": "critical" | "over" | "normal" | null,
+  "materialTarget": string | null,
+  "comparison": boolean,
+  "reportType": "daily" | "weekly" | "monthly" | null,
+  "type": "DIRECT" | "INDIRECT" | null
+}
 
-  Pilihan intent yang valid:
-  - "cek_stok"
-  - "stok_hampir_habis"
-  - "stok_over"
-  - "lokasi_material"
-  - "penerimaan"
-  - "pengeluaran"
-  - "laporan"
-  - "bandingkan_stok"
-  - "aktivitas_gudang"
-  - "material_tidak_bergerak"
-  - "forecasting"
-  - "umum"
+---
 
-  Aturan:
-  - Jika user tanya informasi stok → intent: "cek_stok"
-  - Jika tanya material hampir habis → "stok_hampir_habis"
-  - Jika tanya perbandingan stok antar gudang → bandingkan_stok + "comparison": true
-  - Jika tanya laporan → intent "laporan" + jenis reportType jika ada
-  - Jika tidak bisa dikenali → intent "umum"
-  - Isi null untuk field yang tidak relevan
+### Aturan Umum:
+1. **Jangan pernah memasukkan kata seperti “produksi”, “direct”, atau “non-produksi” ke dalam materialTarget.**  
+   Kata-kata tersebut hanya digunakan untuk menentukan nilai pada field **type**.
+2. **materialTarget** hanya diisi jika user menyebut **nama material spesifik**, contoh:
+   - "besi", "semen", "oli", "cat", "sparepart", dll.
+   Jika tidak ada nama material spesifik → isi **null**.
+3. **type** diisi hanya jika disebut secara eksplisit:
+   - Jika ada kata seperti **“direct”** atau **“produksi”** → **type: "DIRECT"**
+   - Jika ada kata seperti **“indirect”** atau **“non-produksi”** → **type: "INDIRECT"**
+   - Jika tidak disebut → **type: null**
+4. Pastikan hasil akhir **hanya berisi JSON valid**, tanpa penjelasan tambahan atau teks lain.
 
-  Contoh:
-  Input: "cek stok besi ulir"
-  Output: {"intent":"cek_stok","stockStatus":null,"materialTarget":"besi ulir","comparison":false,"reportType":null,"type":null}
+---
 
-  Input: "tampilkan laporan harian gudang"
-  Output: {"intent":"laporan","stockStatus":null,"materialTarget":null,"comparison":false,"reportType":"daily","type":null}
+### Panduan Penentuan Intent:
+- Tanya jumlah / ketersediaan → **cek_stok**
+- Stok hampir habis → **stok_hampir_habis**, **stockStatus: "critical"**
+- Stok berlebih → **stok_over**, **stockStatus: "over"**
+- Lokasi material → **lokasi_material**
+- Penerimaan → **penerimaan**
+- Pengeluaran → **pengeluaran**
+- Laporan → **laporan**, tentukan **reportType** jika disebut (daily, weekly, monthly)
+- Perbandingan stok → **bandingkan_stok**, **comparison: true**
+- Aktivitas keluar masuk → **aktivitas_gudang**
+- Material tidak bergerak lama → **material_tidak_bergerak**
+- Prediksi stok / tren → **forecasting**
+- Tidak jelas → **umum**
 
-  Input: "${question}"
-  Output:
-  `.trim();
+---
+
+### Contoh Input & Output:
+
+Input: "cek stok besi ulir"
+Output: {"intent":"cek_stok","stockStatus":null,"materialTarget":"besi ulir","comparison":false,"reportType":null,"type":null}
+
+Input: "cek stok material untuk produksi"
+Output: {"intent":"cek_stok","stockStatus":null,"materialTarget":null,"comparison":false,"reportType":null,"type":"DIRECT"}
+
+Input: "laporan bulanan pengeluaran material non-produksi"
+Output: {"intent":"laporan","stockStatus":null,"materialTarget":null,"comparison":false,"reportType":"monthly","type":"INDIRECT"}
+
+Input: "bandingkan stok oli produksi dan grease antara gudang A dan B"
+Output: {"intent":"bandingkan_stok","stockStatus":null,"materialTarget":"oli, grease","comparison":true,"reportType":null,"type":"DIRECT"}
+
+---
+
+Sekarang analisis pertanyaan berikut dan hasilkan **JSON valid saja**:
+"${question}"
+`.trim();
 
     const result = await this.askGemini(prompt);
     return this.extractJson(result);
